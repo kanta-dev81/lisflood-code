@@ -537,7 +537,7 @@ class outputTssMap(object):
                     raise LisfloodFileError(str(binding[tss]), msg)
 
         # initialise output objects
-        self.output_maps = OutputMapsFactory(self.var)
+        self.output_maps = OutputMapsFactoryThreads(self.var)
 
     def dynamic(self):
         """ dynamic part of the output module

@@ -397,6 +397,30 @@ satFun = njit(nogil=True, fastmath=False, cache=True)(__satFun)
 
 satFunVectorized = vectorize("f8(f8,f8,f8)", nopython=True, target='parallel', fastmath=False, cache=True)(__satFun)
 
+@njit(parallel=True, fastmath=False, cache=True)
+def suctionUnsaturatedSoilPF_numba(index_landuse_all, pF0, pF1, pF2, W1a, W1b, W2,
+                                   WRes1a, WRes1b, WRes2, WS1a, WS1b, WS2,
+                                   PoreSpaceNotZero1a, PoreSpaceNotZero1b, PoreSpaceNotZero2,
+                                   GenuInvAlpha1a, GenuInvAlpha1b, GenuInvAlpha2,
+                                   GenuInvM1a, GenuInvM1b, GenuInvM2,
+                                   GenuInvN1a, GenuInvN1b, GenuInvN2, HeadMax):
+    """Compute PF values from soil moisture."""
+    num_vegs, num_pixs = W1a.shape
+    for veg in range(num_vegs):
+        landuse = index_landuse_all[veg]
+        for pix in prange(num_pixs):
+            SatTerm1a = saturationDegree(W1a[veg,pix], PoreSpaceNotZero1a[landuse,pix], WRes1a[landuse,pix], WS1a[landuse,pix])
+            SatTerm1b = saturationDegree(W1b[veg,pix], PoreSpaceNotZero1b[landuse,pix], WRes1b[landuse,pix], WS1b[landuse,pix])
+            SatTerm2 = saturationDegree(W2[veg,pix], PoreSpaceNotZero2[landuse,pix], WRes2[landuse,pix], WS2[landuse,pix])
+            # Saturation term in Van Genuchten equation
+            Head1a = pressureHead(SatTerm1a, GenuInvAlpha1a[landuse,pix], GenuInvM1a[landuse,pix], GenuInvN1a[landuse,pix], HeadMax)
+            Head1b = pressureHead(SatTerm1b, GenuInvAlpha1b[landuse,pix], GenuInvM1b[landuse,pix], GenuInvN1b[landuse,pix], HeadMax)
+            Head2 = pressureHead(SatTerm2, GenuInvAlpha2[landuse,pix], GenuInvM2[landuse,pix], GenuInvN2[landuse,pix], HeadMax)
+            # Compute capillary heads for both soil layers [cm]
+            pF0[veg,pix] = np.log10(Head1a) if Head1a > 0 else -1.
+            pF1[veg,pix] = np.log10(Head1b) if Head1b > 0 else -1.
+            pF2[veg,pix] = np.log10(Head2) if Head2 > 0 else -1.
+
 
 '''
 @njit(parallel=True, fastmath=True)
@@ -670,38 +694,15 @@ class soilloop(HydroModule):
         # ************************************************************
         # ***** CALCULATION OF PF VALUES FROM SOIL MOISTURE (OPTIONAL)
         # ************************************************************
-        @njit(parallel=True, fastmath=False, cache=True)
-        def suctionUnsaturatedSoilPF(index_landuse_all, pF0, pF1, pF2, W1a, W1b, W2,
-                                     WRes1a, WRes1b, WRes2, WS1a, WS1b, WS2,
-                                     PoreSpaceNotZero1a, PoreSpaceNotZero1b, PoreSpaceNotZero2,
-                                     GenuInvAlpha1a, GenuInvAlpha1b, GenuInvAlpha2,
-                                     GenuInvM1a, GenuInvM1b, GenuInvM2,
-                                     GenuInvN1a, GenuInvN1b, GenuInvN2, HeadMax):
-            """Compute PF values"""
-            num_vegs, num_pixs = W1a.shape
-            for veg in range(num_vegs):
-                landuse = index_landuse_all[veg]
-                for pix in prange(num_pixs):
-                    SatTerm1a = saturationDegree(W1a[veg,pix], PoreSpaceNotZero1a[landuse,pix], WRes1a[landuse,pix], WS1a[landuse,pix])
-                    SatTerm1b = saturationDegree(W1b[veg,pix], PoreSpaceNotZero1b[landuse,pix], WRes1b[landuse,pix], WS1b[landuse,pix])
-                    SatTerm2 = saturationDegree(W2[veg,pix], PoreSpaceNotZero2[landuse,pix], WRes2[landuse,pix], WS2[landuse,pix])
-                    # Saturation term in Van Genuchten equation
-                    Head1a = pressureHead(SatTerm1a, GenuInvAlpha1a[landuse,pix], GenuInvM1a[landuse,pix], GenuInvN1a[landuse,pix], HeadMax)
-                    Head1b = pressureHead(SatTerm1b, GenuInvAlpha1b[landuse,pix], GenuInvM1b[landuse,pix], GenuInvN1b[landuse,pix], HeadMax)
-                    Head2 = pressureHead(SatTerm2, GenuInvAlpha2[landuse,pix], GenuInvM2[landuse,pix], GenuInvN2[landuse,pix], HeadMax)
-                    # Compute capillary heads for both soil layers [cm]
-                    pF0[veg,pix] = np.log10(Head1a) if Head1a > 0 else -1.
-                    pF1[veg,pix] = np.log10(Head1b) if Head1b > 0 else -1.
-                    pF2[veg,pix] = np.log10(Head2) if Head2 > 0 else -1.
         if option['simulatePF']:
-            suctionUnsaturatedSoilPF(self.index_landuse_all, self.var.pF0.values, self.var.pF1.values, self.var.pF2.values,
-                                     self.var.W1a.values, self.var.W1b.values, self.var.W2.values,
-                                     self.var.WRes1a.values, self.var.WRes1b.values, self.var.WRes2.values,
-                                     self.var.WS1a.values, self.var.WS1b.values, self.var.WS2.values,
-                                     self.var.PoreSpaceNotZero1a.values, self.var.PoreSpaceNotZero1b.values, self.var.PoreSpaceNotZero2.values,
-                                     self.var.GenuInvAlpha1a.values, self.var.GenuInvAlpha1b.values, self.var.GenuInvAlpha2.values,
-                                     self.var.GenuInvM1a.values, self.var.GenuInvM1b.values, self.var.GenuInvM2.values,
-                                     self.var.GenuInvN1a.values, self.var.GenuInvN1b.values, self.var.GenuInvN2.values, self.var.HeadMax)
+            suctionUnsaturatedSoilPF_numba(self.index_landuse_all, self.var.pF0.values, self.var.pF1.values, self.var.pF2.values,
+                                           self.var.W1a.values, self.var.W1b.values, self.var.W2.values,
+                                           self.var.WRes1a.values, self.var.WRes1b.values, self.var.WRes2.values,
+                                           self.var.WS1a.values, self.var.WS1b.values, self.var.WS2.values,
+                                           self.var.PoreSpaceNotZero1a.values, self.var.PoreSpaceNotZero1b.values, self.var.PoreSpaceNotZero2.values,
+                                           self.var.GenuInvAlpha1a.values, self.var.GenuInvAlpha1b.values, self.var.GenuInvAlpha2.values,
+                                           self.var.GenuInvM1a.values, self.var.GenuInvM1b.values, self.var.GenuInvM2.values,
+                                           self.var.GenuInvN1a.values, self.var.GenuInvN1b.values, self.var.GenuInvN2.values, self.var.HeadMax)
 
     def ThetaSatTerms(self, veg):
         iveg, ilanduse, _ = self.var.get_landuse_and_indexes_from_vegetation_epic(veg)
